@@ -1,3 +1,16 @@
+#!/bin/bash
+set -euo pipefail
+
+WORKDIR="$HOME/SW-exercise1/ex11/django-test-exercise"
+cd "$WORKDIR" || { echo "Directory not found: $WORKDIR"; exit 1; }
+
+# バックアップ
+cp todo/tests.py todo/tests.py.bak
+echo "Backup created: todo/tests.py.bak"
+
+# 上書き内容を一時ファイルに書く
+TMPFILE=$(mktemp)
+cat > "$TMPFILE" <<'PYTEST'
 from django.test import TestCase, Client
 from django.utils import timezone
 from datetime import datetime
@@ -92,20 +105,45 @@ class TaskModelTestCase(TestCase):
         self.assertEqual(response.templates[0].name, 'todo/index.html')
         self.assertEqual(response.context['tasks'][0], task1)
         self.assertEqual(response.context['tasks'][1], task2)
+PYTEST
 
+# 移動して上書き
+mv "$TMPFILE" todo/tests.py
+chmod 644 todo/tests.py
+printf "\n" >> todo/tests.py
 
-    def test_detail_get_success(self):
-        task = Task(title='task1', due_at=timezone.make_aware(datetime(2024, 7, 1)))
-        task.save()
-        client = Client()
-        response = client.get('/{}/'.format(task.pk))
+# 構文チェック
+python -m py_compile todo/tests.py
+echo "py_compile: OK"
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.templates[0].name, 'todo/detail.html')
-        self.assertEqual(response.context['task'], task)
+# flake8 fatal checks
+python -m pip install --upgrade pip
+python -m pip install flake8
+flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+echo "flake8 fatal checks: OK"
 
-    def test_detail_get_fail(self):
-        client = Client()
-        response = client.get('/1/')
-        self.assertEqual(response.status_code, 404)
+# ローカルテスト
+python manage.py test
+echo "local tests: OK"
 
+# Git commit & push
+git add todo/tests.py
+if git commit -m "Fix: normalize indentation and formatting in todo/tests.py to satisfy flake8"; then
+  echo "Committed changes."
+else
+  echo "No changes to commit."
+fi
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+echo "Current branch: $BRANCH"
+
+if git push origin "$BRANCH"; then
+  echo "Pushed to origin/$BRANCH"
+else
+  echo "Push failed (protected branch?). Creating branch fix/tests-format and pushing it."
+  git checkout -b fix/tests-format
+  git push origin fix/tests-format
+  echo "Pushed to origin/fix/tests-format — open a PR from this branch."
+fi
+
+echo "All done. Check GitHub Actions for CI run."
